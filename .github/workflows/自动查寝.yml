@@ -1,11 +1,13 @@
 name: Python Auto Bed Check
 
-on: 
+on:
   schedule:
-      # 设置启动时间，为 UTC 时间, UTC23点 对应北京时间早7点
-      - cron : '35 13 * * *'
+    # 设置启动时间，为 UTC 时间，UTC23点 对应北京时间早7点
+    - cron: '35 13 * * *'   # 当前：北京时间每天 21:35（晚上 9:35）
+    # 若想改成北京时间早上 7:35，用下面这行替换上面那行：
+    # - cron: '35 23 * * *'
   workflow_dispatch:
-  
+
 permissions:
   contents: read
 
@@ -18,14 +20,23 @@ jobs:
     - uses: actions/checkout@v4
     - uses: actions/setup-python@v5
       with:
-        python-version: '3.11' 
+        python-version: "3.11"
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Run
       run: |
-        python main.py -e
+        set -o pipefail
+        python main.py -e 2>&1 | tee run.log
       env:
         loginUserName: ${{ secrets.loginUserName }}
         loginPassword: ${{ secrets.loginPassword }}
+    - name: 通知手机
+      if: always()
+      run: |
+        if [ "${{ job.status }}" = "success" ]; then RESULT="运行成功"; else RESULT="运行失败"; fi
+        LOG=$(tail -n 15 run.log 2>/dev/null || echo "（无日志输出）")
+        curl -s -X POST "https://sctapi.ftqq.com/${{ secrets.SERVERCHAN_SENDKEY }}.send" \
+          -d "title=自动查寝：${RESULT}" \
+          --data-urlencode "desp=${LOG}"
