@@ -2,10 +2,10 @@ name: Python Auto Bed Check
 
 on:
   schedule:
-    # 设置启动时间，为 UTC 时间，UTC23点 对应北京时间早7点
-    - cron: '35 13 * * *'   # 当前：北京时间每天 21:35（晚上 9:35）
-    # 若想改成北京时间早上 7:35，用下面这行替换上面那行：
-    # - cron: '35 23 * * *'
+    # GitHub 定时不可靠(高峰期延迟/跳过)，改为每10分钟轮询一次。
+    # "窗口判断"放在最前：不在北京时间 21:30-22:30 时，
+    # 不拉代码、不装环境，2-3 秒内退出，几乎零消耗。
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -14,26 +14,38 @@ permissions:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
-    env:
-      TZ: Asia/Shanghai
     steps:
+    - name: 窗口判断（北京时间 21:30-22:30 之外直接跳过）
+      id: window
+      run: |
+        H=$(TZ=Asia/Shanghai date +%H%M)
+        if [ "$H" -ge 2130 ] && [ "$H" -le 2230 ]; then
+          echo "in_window=1" >> "$GITHUB_OUTPUT"
+          echo "北京时间 $H：在签到窗口内，执行签到"
+        else
+          echo "in_window=0" >> "$GITHUB_OUTPUT"
+          echo "北京时间 $H：不在窗口，本次跳过"
+        fi
+
     - uses: actions/checkout@v4
+      if: steps.window.outputs.in_window == '1'
     - uses: actions/setup-python@v5
+      if: steps.window.outputs.in_window == '1'
       with:
         python-version: "3.11"
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
     - name: Run
+      if: steps.window.outputs.in_window == '1'
       run: |
         set -o pipefail
         python main.py -e 2>&1 | tee run.log
       env:
+        TZ: Asia/Shanghai
         loginUserName: ${{ secrets.loginUserName }}
         loginPassword: ${{ secrets.loginPassword }}
+
     - name: 通知手机
-      if: always()
+      if: always() && steps.window.outputs.in_window == '1'
       run: |
         if [ "${{ job.status }}" = "success" ]; then RESULT="运行成功"; else RESULT="运行失败"; fi
         LOG=$(tail -n 15 run.log 2>/dev/null || echo "（无日志输出）")
